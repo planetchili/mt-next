@@ -2,95 +2,123 @@
 #include <random>
 #include <array>
 #include <ranges>
-#include <limits>
 #include <cmath>
 #include <thread>
 #include <mutex>
 #include <span>
+#include <numbers>
+#include <fstream>
+#include <format>
 #include "ChiliTimer.h"
 
-constexpr size_t DATASET_SIZE = 50'000'000;
 
-void ProcessDataset(std::span<int> arr, int& sum)
+constexpr bool ChunkMeasurementEnabled = false;
+constexpr size_t WorkerCount = 4;
+constexpr size_t ChunkSize = 8'000;
+constexpr size_t ChunkCount = 100;
+constexpr size_t LightIterations = 100;
+constexpr size_t HeavyIterations = 1'000;
+constexpr double ProbabilityHeavy = .15;
+
+constexpr size_t SubsetSize = ChunkSize / WorkerCount;
+
+static_assert(ChunkSize >= WorkerCount);
+static_assert(ChunkSize % WorkerCount == 0);
+
+struct Task
 {
-    for (auto x : arr)
+    double val;
+    bool heavy;
+    unsigned int Process() const
     {
-        constexpr auto limit = (double)std::numeric_limits<int>::max();
-        const auto y = (double)x / limit;
-        sum += int(std::sin(std::cos(y)) * limit);
+        const auto iterations = heavy ? HeavyIterations : LightIterations;
+        auto intermediate = val;
+        for (size_t i = 0; i < iterations; i++)
+        {
+            const auto digits = unsigned int(std::abs(std::sin(std::cos(intermediate) * std::numbers::pi) * 10'000'000.)) % 100'000;
+            intermediate = double(digits) / 10'000.;
+        }
+        return unsigned int(std::exp(intermediate));
     }
-}
+};
 
-std::vector<std::array<int, DATASET_SIZE>> GenerateDatasets()
+auto GenerateDataset()
 {
     std::minstd_rand rne;
-    std::vector<std::array<int, DATASET_SIZE>> datasets{ 4 };
+    std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
+    std::bernoulli_distribution hDist{ ProbabilityHeavy };
 
-    for (auto& arr : datasets)
+    std::vector<std::array<Task, ChunkSize>> chunks(ChunkCount);
+
+    for (auto& chunk : chunks)
     {
-        std::ranges::generate(arr, rne);
+        std::ranges::generate(chunk, [&] { return Task{ .val = vDist(rne), .heavy = hDist(rne) }; });
     }
 
-    return datasets;
+    return chunks;
 }
 
-int DoBiggie()
+auto GenerateDatasetEven()
 {
-    auto datasets = GenerateDatasets();
+    std::minstd_rand rne;
+    std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
 
-    std::vector<std::thread> workers;
-    ChiliTimer timer;
+    std::vector<std::array<Task, ChunkSize>> chunks(ChunkCount);
 
-    struct Value
+    for (auto& chunk : chunks)
     {
-        int v = 0;
-        char padding[60];
-    };
-    Value sum[4];
-
-    timer.Mark();
-    for (size_t i = 0; i < 4; i++)
-    {
-        workers.push_back(std::thread{ ProcessDataset, std::span{ datasets[i] }, std::ref(sum[i].v) });
+        std::ranges::generate(chunk, [&, acc = 0.]() mutable {
+            bool heavy = false;
+            if ((acc += ProbabilityHeavy) >= 1.)
+            {
+                acc -= 1.;
+                heavy = true;
+            }
+            return Task{.val = vDist(rne), .heavy = heavy};
+        });
     }
 
-    for (auto& worker : workers)
+    return chunks;
+}
+
+auto GenerateDatasetStacked()
+{
+    auto chunks = GenerateDatasetEven();
+
+    for (auto& chunk : chunks)
     {
-        worker.join();
+        std::ranges::partition(chunk, std::identity{}, &Task::heavy);
     }
-    const auto t = timer.Peek();
 
-    std::cout << "Processing took " << t << " seconds\n";
-    std::cout << "Result is " << (sum[0].v + sum[1].v + sum[2].v + sum[3].v) << std::endl;
-
-    return 0;
+    return chunks;
 }
 
 class MasterControl
 {
 public:
-    MasterControl(int workerCount) : lk{ mtx }, workerCount{ workerCount } {}
+    MasterControl() : lk{ mtx } {}
     void SignalDone()
     {
+        bool needsNotification = false;
         {
             std::lock_guard lk{ mtx };
             ++doneCount;
+            needsNotification = doneCount == WorkerCount;
         }
-        if (doneCount == workerCount)
+        if (needsNotification)
         {
             cv.notify_one();
         }
     }
     void WaitForAllDone()
     {
-        cv.wait(lk, [this] { return doneCount == workerCount; });
+        cv.wait(lk, [this] { return doneCount == WorkerCount; });
         doneCount = 0;
     }
 private:
     std::condition_variable cv;
     std::mutex mtx;
     std::unique_lock<std::mutex> lk;
-    int workerCount;
     // shared memory
     int doneCount = 0;
 };
@@ -103,12 +131,11 @@ public:
         pMaster{ pMaster },
         thread{ &Worker::Run_, this }
     {}
-    void SetJob(std::span<int> data, int* pOut)
+    void SetJob(std::span<const Task> data)
     {
         {
             std::lock_guard lk{ mtx };
             input = data;
-            pOutput = pOut;
         }
         cv.notify_one();
     }
@@ -120,19 +147,60 @@ public:
         }
         cv.notify_one();
     }
+    unsigned int GetResult() const
+    {
+        return accumulation;
+    }
+    size_t GetNumHeavyItemsProcessed() const
+    {
+        return numHeavyItemsProcessed;
+    }
+    float GetJobWorkTime() const
+    {
+        return workTime;
+    }
+    ~Worker()
+    {
+        Kill();
+    }
 private:
+    void ProcessData_()
+    {
+        if constexpr (ChunkMeasurementEnabled)
+        {
+            numHeavyItemsProcessed = 0;
+        }
+        for (auto& task : input)
+        {
+            accumulation += task.Process();
+            if constexpr (ChunkMeasurementEnabled)
+            {
+                numHeavyItemsProcessed += task.heavy ? 1 : 0;
+            }
+        }
+    }
     void Run_()
     {
         std::unique_lock lk{ mtx };
         while (true)
         {
-            cv.wait(lk, [this] {return pOutput != nullptr || dying; });
+            ChiliTimer timer;
+            cv.wait(lk, [this] {return !input.empty() || dying; });
             if (dying)
             {
                 break;
             }
-            ProcessDataset(input, *pOutput);
-            pOutput = nullptr;
+
+            if constexpr (ChunkMeasurementEnabled)
+            {
+                timer.Mark();
+            }
+            ProcessData_();
+            if constexpr (ChunkMeasurementEnabled)
+            {
+                workTime = timer.Peek();
+            }
+
             input = {};
             pMaster->SignalDone();
         }
@@ -142,50 +210,96 @@ private:
     std::condition_variable cv;
     std::mutex mtx;
     // shared memory
-    std::span<int> input;
-    int* pOutput = nullptr;
+    std::span<const Task> input;
+    unsigned int accumulation = 0;
+    float workTime = -1.f;
+    size_t numHeavyItemsProcessed = 0;
     bool dying = false;
 };
 
-int DoSmallies()
+struct ChunkTimingInfo
 {
-    auto datasets = GenerateDatasets();
+    std::array<float, WorkerCount> timeSpentWorkingPerThread;
+    std::array<size_t, WorkerCount> numberOfHeavyItemsPerThread;
+    float totalChunkTime;
+};
 
-    struct Value
+int DoExperiment(bool stacked)
+{
+    const auto chunks = stacked ? GenerateDatasetStacked() : GenerateDatasetEven();
+
+    ChiliTimer chunkTimer;
+    std::vector<ChunkTimingInfo> timings;
+    timings.reserve(ChunkCount);
+
+    ChiliTimer totalTimer;
+    totalTimer.Mark();
+
+    MasterControl mctrl;
+
+    std::vector<std::unique_ptr<Worker>> workerPtrs(WorkerCount);
+    std::ranges::generate(workerPtrs, [pMctrl = &mctrl] { return std::make_unique<Worker>(pMctrl); });
+
+    for (auto& chunk : chunks)
     {
-        int v = 0;
-        char padding[60];
-    };
-    Value sum[4];
-
-    ChiliTimer timer;
-    timer.Mark();
-
-    constexpr size_t workerCount = 4;
-    MasterControl mctrl{ workerCount };
-    std::vector<std::unique_ptr<Worker>> workerPtrs;
-    for (size_t i = 0; i < workerCount; i++)
-    {
-        workerPtrs.push_back(std::make_unique<Worker>(&mctrl));
-    }
-
-    constexpr const auto subsetSize = DATASET_SIZE / 10'000;
-    for (size_t i = 0; i < DATASET_SIZE; i += subsetSize)
-    {
-        for (size_t j = 0; j < 4; j++)
+        if constexpr (ChunkMeasurementEnabled)
         {
-            workerPtrs[j]->SetJob(std::span{ &datasets[j][i], subsetSize }, &sum[j].v);
+            chunkTimer.Mark();
+        }
+        for (size_t iSubset = 0; iSubset < WorkerCount; iSubset++)
+        {
+            workerPtrs[iSubset]->SetJob(std::span{ &chunk[iSubset * SubsetSize], SubsetSize });
         }
         mctrl.WaitForAllDone();
+
+        if constexpr (ChunkMeasurementEnabled)
+        {
+            timings.push_back(ChunkTimingInfo{ .totalChunkTime = chunkTimer.Peek() });
+            for (size_t i = 0; i < WorkerCount; i++)
+            {
+                auto& cur = timings.back();
+                cur.numberOfHeavyItemsPerThread[i] = workerPtrs[i]->GetNumHeavyItemsProcessed();
+                cur.timeSpentWorkingPerThread[i] = workerPtrs[i]->GetJobWorkTime();
+            }
+        }
     }
-    const auto t = timer.Peek();
+
+    const auto t = totalTimer.Peek();
 
     std::cout << "Processing took " << t << " seconds\n";
-    std::cout << "Result is " << sum[0].v + sum[1].v + sum[2].v + sum[3].v << std::endl;
 
-    for (auto& w : workerPtrs)
+    unsigned int finalResult = 0;
+    for (const auto& w : workerPtrs)
     {
-        w->Kill();
+        finalResult += w->GetResult();
+    }
+    std::cout << "Result is " << finalResult << std::endl;
+
+
+    if constexpr (ChunkMeasurementEnabled)
+    {
+        std::ofstream csv{ "timings.csv", std::ios_base::trunc };
+        // csv header
+        for (size_t i = 0; i < WorkerCount; i++)
+        {
+            csv << std::format("work_{0:},idle_{0:},heavy_{0:},", i);
+        }
+        csv << "chunktime,total_idle,total_heavy\n";
+
+        for (const auto& chunk : timings)
+        {
+            float totalIdle = 0.f;
+            size_t totalHeavy = 0;
+            for (size_t i = 0; i < WorkerCount; i++)
+            {
+                const auto idle = chunk.totalChunkTime - chunk.timeSpentWorkingPerThread[i];
+                const auto heavy = chunk.numberOfHeavyItemsPerThread[i];
+                csv << std::format("{},{},{},", chunk.timeSpentWorkingPerThread[i], idle, heavy);
+                totalIdle += idle;
+                totalHeavy += heavy;
+            }
+            csv << std::format("{},{},{}\n", chunk.totalChunkTime, totalIdle, totalHeavy);
+        }
     }
 
     return 0;
@@ -193,9 +307,10 @@ int DoSmallies()
 
 int main(int argc, char** argv)
 {
-    if (argc > 1 && std::string{ argv[1] } == "--smol")
-    {
-        return DoSmallies();
+    using namespace std::string_literals;
+    bool stacked = false;
+    if (argc > 1 && argv[1] == "--stacked"s) {
+        stacked = true;
     }
-    return DoBiggie();
+    return DoExperiment(stacked);
 }
