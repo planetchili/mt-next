@@ -3,6 +3,14 @@
   "Id": "746d96e9-1f79-4ffa-96f7-523fef4d3980",
   "Items": [
     {
+      "Id": "bf3845b1-c9e1-426b-b822-6ced5b6f8870",
+      "Command": "--even"
+    },
+    {
+      "Id": "15706bce-5247-497a-a63d-a79291ded39e",
+      "Command": "--queued"
+    },
+    {
       "Id": "21536236-885b-4e95-b156-1ea9837db643",
       "Command": "--stacked"
     }

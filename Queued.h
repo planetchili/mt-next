@@ -33,12 +33,29 @@ namespace que
             cv.wait(lk, [this] { return doneCount == WorkerCount; });
             doneCount = 0;
         }
+        void SetChunk(std::span<const Task> chunk)
+        {
+            idx = 0;
+            currentChunk = chunk;
+        }
+        const Task* GetTask()
+        {
+            std::lock_guard lck{ mtx };
+            const auto i = idx++;
+            if (i >= ChunkSize)
+            {
+                return nullptr;
+            }
+            return &currentChunk[i];
+        }
     private:
         std::condition_variable cv;
         std::mutex mtx;
         std::unique_lock<std::mutex> lk;
+        std::span<const Task> currentChunk;
         // shared memory
         int doneCount = 0;
+        size_t idx = 0;
     };
 
     class Worker
@@ -49,11 +66,11 @@ namespace que
             pMaster{ pMaster },
             thread{ &Worker::Run_, this }
         {}
-        void SetJob(std::span<const Task> data)
+        void StartWork()
         {
             {
                 std::lock_guard lk{ mtx };
-                input = data;
+                working = true;
             }
             cv.notify_one();
         }
@@ -88,12 +105,12 @@ namespace que
             {
                 numHeavyItemsProcessed = 0;
             }
-            for (auto& task : input)
+            while (auto pTask = pMaster->GetTask())
             {
-                accumulation += task.Process();
+                accumulation += pTask->Process();
                 if constexpr (ChunkMeasurementEnabled)
                 {
-                    numHeavyItemsProcessed += task.heavy ? 1 : 0;
+                    numHeavyItemsProcessed += pTask->heavy ? 1 : 0;
                 }
             }
         }
@@ -103,7 +120,7 @@ namespace que
             while (true)
             {
                 ChiliTimer timer;
-                cv.wait(lk, [this] {return !input.empty() || dying; });
+                cv.wait(lk, [this] {return working || dying; });
                 if (dying)
                 {
                     break;
@@ -119,7 +136,7 @@ namespace que
                     workTime = timer.Peek();
                 }
 
-                input = {};
+                working = false;
                 pMaster->SignalDone();
             }
         }
@@ -128,11 +145,11 @@ namespace que
         std::condition_variable cv;
         std::mutex mtx;
         // shared memory
-        std::span<const Task> input;
         unsigned int accumulation = 0;
         float workTime = -1.f;
         size_t numHeavyItemsProcessed = 0;
         bool dying = false;
+        bool working = false;
     };
 
     int DoExperiment(Dataset chunks)
@@ -155,9 +172,10 @@ namespace que
             {
                 chunkTimer.Mark();
             }
-            for (size_t iSubset = 0; iSubset < WorkerCount; iSubset++)
+            mctrl.SetChunk(chunk);
+            for (auto& pWorker : workerPtrs)
             {
-                workerPtrs[iSubset]->SetJob(std::span{ &chunk[iSubset * SubsetSize], SubsetSize });
+                pWorker->StartWork();
             }
             mctrl.WaitForAllDone();
 

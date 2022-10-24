@@ -13,6 +13,7 @@ int main(int argc, char** argv)
     OptionParser op("Allowed options");
     auto stacked = op.add<Switch>("", "stacked", "Generate a stacked dataset");
     auto even = op.add<Switch>("", "even", "Generate an even");
+    auto queued = op.add<Switch>("", "queued", "Used queued approach");
     op.parse(argc, argv);
 
     // generate dataset
@@ -28,5 +29,10 @@ int main(int argc, char** argv)
     }
 
     // run experiment
-    return pre::DoExperiment(std::move(data));
+    if (queued->is_set()) {
+        return que::DoExperiment(std::move(data));
+    }
+    else {
+        return pre::DoExperiment(std::move(data));
+    }
 }
