@@ -41,5 +41,8 @@
     <ClInclude Include="Preassigned.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Queued.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
