@@ -133,7 +133,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ChiliTimer.h" />
+    <ClInclude Include="Constants.h" />
+    <ClInclude Include="Timing.h" />
     <ClInclude Include="popl.h" />
+    <ClInclude Include="Task.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

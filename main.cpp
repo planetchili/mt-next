@@ -1,98 +1,15 @@
 #include <iostream>
-#include <random>
 #include <array>
 #include <ranges>
-#include <cmath>
 #include <thread>
 #include <mutex>
 #include <span>
-#include <numbers>
-#include <fstream>
 #include <format>
-#include "ChiliTimer.h"
 #include "popl.h"
-
-
-constexpr bool ChunkMeasurementEnabled = false;
-constexpr size_t WorkerCount = 4;
-constexpr size_t ChunkSize = 8'000;
-constexpr size_t ChunkCount = 100;
-constexpr size_t LightIterations = 100;
-constexpr size_t HeavyIterations = 1'000;
-constexpr double ProbabilityHeavy = .15;
-
-constexpr size_t SubsetSize = ChunkSize / WorkerCount;
-
-static_assert(ChunkSize >= WorkerCount);
-static_assert(ChunkSize % WorkerCount == 0);
-
-struct Task
-{
-    double val;
-    bool heavy;
-    unsigned int Process() const
-    {
-        const auto iterations = heavy ? HeavyIterations : LightIterations;
-        auto intermediate = val;
-        for (size_t i = 0; i < iterations; i++)
-        {
-            const auto digits = unsigned int(std::abs(std::sin(std::cos(intermediate) * std::numbers::pi) * 10'000'000.)) % 100'000;
-            intermediate = double(digits) / 10'000.;
-        }
-        return unsigned int(std::exp(intermediate));
-    }
-};
-
-auto GenerateDataset()
-{
-    std::minstd_rand rne;
-    std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
-    std::bernoulli_distribution hDist{ ProbabilityHeavy };
-
-    std::vector<std::array<Task, ChunkSize>> chunks(ChunkCount);
-
-    for (auto& chunk : chunks)
-    {
-        std::ranges::generate(chunk, [&] { return Task{ .val = vDist(rne), .heavy = hDist(rne) }; });
-    }
-
-    return chunks;
-}
-
-auto GenerateDatasetEven()
-{
-    std::minstd_rand rne;
-    std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
-
-    std::vector<std::array<Task, ChunkSize>> chunks(ChunkCount);
-
-    for (auto& chunk : chunks)
-    {
-        std::ranges::generate(chunk, [&, acc = 0.]() mutable {
-            bool heavy = false;
-            if ((acc += ProbabilityHeavy) >= 1.)
-            {
-                acc -= 1.;
-                heavy = true;
-            }
-            return Task{.val = vDist(rne), .heavy = heavy};
-        });
-    }
-
-    return chunks;
-}
-
-auto GenerateDatasetStacked()
-{
-    auto chunks = GenerateDatasetEven();
-
-    for (auto& chunk : chunks)
-    {
-        std::ranges::partition(chunk, std::identity{}, &Task::heavy);
-    }
-
-    return chunks;
-}
+#include "ChiliTimer.h"
+#include "Constants.h"
+#include "Task.h"
+#include "Timing.h"
 
 class MasterControl
 {
@@ -218,13 +135,6 @@ private:
     bool dying = false;
 };
 
-struct ChunkTimingInfo
-{
-    std::array<float, WorkerCount> timeSpentWorkingPerThread;
-    std::array<size_t, WorkerCount> numberOfHeavyItemsPerThread;
-    float totalChunkTime;
-};
-
 int DoExperiment(bool stacked)
 {
     const auto chunks = stacked ? GenerateDatasetStacked() : GenerateDatasetEven();
@@ -279,28 +189,7 @@ int DoExperiment(bool stacked)
 
     if constexpr (ChunkMeasurementEnabled)
     {
-        std::ofstream csv{ "timings.csv", std::ios_base::trunc };
-        // csv header
-        for (size_t i = 0; i < WorkerCount; i++)
-        {
-            csv << std::format("work_{0:},idle_{0:},heavy_{0:},", i);
-        }
-        csv << "chunktime,total_idle,total_heavy\n";
-
-        for (const auto& chunk : timings)
-        {
-            float totalIdle = 0.f;
-            size_t totalHeavy = 0;
-            for (size_t i = 0; i < WorkerCount; i++)
-            {
-                const auto idle = chunk.totalChunkTime - chunk.timeSpentWorkingPerThread[i];
-                const auto heavy = chunk.numberOfHeavyItemsPerThread[i];
-                csv << std::format("{},{},{},", chunk.timeSpentWorkingPerThread[i], idle, heavy);
-                totalIdle += idle;
-                totalHeavy += heavy;
-            }
-            csv << std::format("{},{},{}\n", chunk.totalChunkTime, totalIdle, totalHeavy);
-        }
+        WriteCSV(timings);
     }
 
     return 0;
