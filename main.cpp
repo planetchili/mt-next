@@ -10,6 +10,7 @@
 #include <fstream>
 #include <format>
 #include "ChiliTimer.h"
+#include "popl.h"
 
 
 constexpr bool ChunkMeasurementEnabled = false;
@@ -305,12 +306,16 @@ int DoExperiment(bool stacked)
     return 0;
 }
 
+
+
 int main(int argc, char** argv)
 {
     using namespace std::string_literals;
-    bool stacked = false;
-    if (argc > 1 && argv[1] == "--stacked"s) {
-        stacked = true;
-    }
-    return DoExperiment(stacked);
+    using namespace popl;
+
+    OptionParser op("Allowed options");
+    auto stacked = op.add<Switch>("", "stacked", "Generate a stacked dataset");
+    op.parse(argc, argv);
+
+    return DoExperiment(stacked->is_set());
 }

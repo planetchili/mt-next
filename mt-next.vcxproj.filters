@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Header Files\Libs">
+      <UniqueIdentifier>{885488d4-e2e2-41df-91ad-e3caa8970f19}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -20,8 +23,11 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="popl.h">
+      <Filter>Header Files\Libs</Filter>
+    </ClInclude>
     <ClInclude Include="ChiliTimer.h">
-      <Filter>Header Files</Filter>
+      <Filter>Header Files\Libs</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
