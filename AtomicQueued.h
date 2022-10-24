@@ -4,6 +4,7 @@
 #include <mutex>
 #include <span>
 #include <format>
+#include <atomic>
 #include "Constants.h"
 #include "Task.h"
 #include "Timing.h"
@@ -40,7 +41,6 @@ namespace atq
         }
         const Task* GetTask()
         {
-            std::lock_guard lck{ mtx };
             const auto i = idx++;
             if (i >= ChunkSize)
             {
@@ -55,7 +55,7 @@ namespace atq
         std::span<const Task> currentChunk;
         // shared memory
         int doneCount = 0;
-        size_t idx = 0;
+        std::atomic<size_t> idx = 0;
     };
 
     class Worker

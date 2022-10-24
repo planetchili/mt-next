@@ -132,6 +132,7 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AtomicQueued.h" />
     <ClInclude Include="ChiliTimer.h" />
     <ClInclude Include="Constants.h" />
     <ClInclude Include="Preassigned.h" />

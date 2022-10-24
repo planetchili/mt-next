@@ -44,5 +44,8 @@
     <ClInclude Include="Queued.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="AtomicQueued.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
