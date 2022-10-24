@@ -135,10 +135,8 @@ namespace pre
         bool dying = false;
     };
 
-    int DoExperiment(bool stacked)
+    int DoExperiment(Dataset chunks)
     {
-        const auto chunks = stacked ? GenerateDatasetStacked() : GenerateDatasetEven();
-
         ChiliTimer chunkTimer;
         std::vector<ChunkTimingInfo> timings;
         timings.reserve(ChunkCount);
