@@ -5,6 +5,7 @@
 #include "Task.h"
 #include <condition_variable>
 #include <functional>
+#include <deque>
 
 namespace tk
 {
@@ -13,66 +14,92 @@ namespace tk
     class ThreadPool
     {
     public:
-        void Run(Task task)
+        ThreadPool(size_t numWorkers)
         {
-            if (auto i = std::ranges::find_if(workers_, [](const auto& w) {return !w->IsBusy();});
-                i != workers_.end()) {
-                (*i)->Run(std::move(task));
-            }
-            else {
-                workers_.push_back(std::make_unique<Worker>());
-                workers_.back()->Run(std::move(task));
+            workers_.reserve(numWorkers);
+            for (size_t i = 0; i < numWorkers; i++) {
+                workers_.emplace_back(this);
             }
         }
-        bool IsRunningTasks()
+        void Run(Task task)
         {
-            return std::ranges::any_of(workers_, [](const auto& w) {return w->IsBusy(); });
+            {
+                std::lock_guard lk{ taskQueueMtx_ };
+                tasks_.push_back(std::move(task));
+            }
+            taskQueueCv_.notify_one();
+        }
+        void WaitForAllDone()
+        {
+            std::unique_lock lk{ taskQueueMtx_ };
+            allDoneCv_.wait(lk, [this] {return tasks_.empty(); });
+        }
+        ~ThreadPool()
+        {
+            for (auto& w : workers_) {
+                w.RequestStop();
+            }
         }
 
     private:
+        // functions
+        Task GetTask_(std::stop_token& st)
+        {
+            Task task;
+            std::unique_lock lk{ taskQueueMtx_ };
+            taskQueueCv_.wait(lk, st, [this] {return !tasks_.empty(); });
+            if (!st.stop_requested()) {
+                task = std::move(tasks_.front());
+                tasks_.pop_front();
+                if (tasks_.empty()) {
+                    allDoneCv_.notify_all();
+                }
+            }
+            return task;
+        }
         // types
-        class Worker
+        class Worker_
         {
         public:
-            Worker() : thread_(&Worker::RunKernel_, this) {}
-            bool IsBusy() const
+            Worker_(ThreadPool* pool) : pool_{ pool }, thread_(std::bind_front(&Worker_::RunKernel_, this)) {}
+            void RequestStop()
             {
-                return busy_;
-            }
-            void Run(Task task)
-            {
-                task_ = std::move(task);
-                busy_ = true;
-                cv_.notify_one();
+                thread_.request_stop();
             }
         private:
             // functions
-            void RunKernel_()
+            void RunKernel_(std::stop_token st)
             {
-                std::unique_lock lk{ mtx_ };
-                auto st = thread_.get_stop_token();
-                while (cv_.wait(lk, st, [this]() -> bool { return busy_; })) {
-                    task_();
-                    task_ = {};
-                    busy_ = false;
+                while (auto task = pool_->GetTask_(st)) {
+                    task();
                 }
             }
             // data
-            std::atomic<bool> busy_ = false;
-            std::condition_variable_any cv_;
-            std::mutex mtx_;
-            Task task_;
+            ThreadPool* pool_;
             std::jthread thread_;
         };
         // data
-        std::vector<std::unique_ptr<Worker>> workers_;
+        std::mutex taskQueueMtx_;
+        std::condition_variable_any taskQueueCv_;
+        std::condition_variable allDoneCv_;
+        std::deque<Task> tasks_;
+        std::vector<Worker_> workers_;
     };
 }
 
 int main(int argc, char** argv)
 {
-    tk::ThreadPool pool;
-    pool.Run([] {std::cout << "HI" << std::endl; });
-    pool.Run([] {std::cout << "LO" << std::endl; });
+    using namespace std::chrono_literals;
+    tk::ThreadPool pool{ 4 };
+    const auto spitt = [] {
+        std::this_thread::sleep_for(100ms);
+        std::ostringstream ss;
+        ss << std::this_thread::get_id();
+        std::cout << std::format("<< {} >>\n", ss.str()) << std::flush;
+    };
+    for (int i = 0; i < 160; i++) {
+        pool.Run(spitt);
+    }
+    pool.WaitForAllDone();
     return 0;
 }
