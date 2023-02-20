@@ -34,6 +34,26 @@ namespace tk
         std::optional<T> result_;
     };
 
+    template<>
+    class SharedState<void>
+    {
+    public:
+        void Set()
+        {
+            if (!complete_) {
+                complete_ = true;
+                readySignal_.release();
+            }
+        }
+        void Get()
+        {
+            readySignal_.acquire();
+        }
+    private:
+        std::binary_semaphore readySignal_{ 0 };
+        bool complete_ = false;
+    };
+
     template<typename T>
     class Promise;
 
@@ -62,10 +82,10 @@ namespace tk
     {
     public:
         Promise() : pState_{ std::make_shared<SharedState<T>>() } {}
-        template<typename R>
-        void Set(R&& result)
+        template<typename...R>
+        void Set(R&&...result)
         {
-            pState_->Set(std::forward<R>(result));
+            pState_->Set(std::forward<R>(result)...);
         }        
         Future<T> GetFuture()
         {
@@ -119,7 +139,13 @@ namespace tk
                 promise = std::forward<P>(promise),
                 ...args = std::forward<A>(args)
             ]() mutable {
-                promise.Set(function(std::forward<A>(args)...));
+                if constexpr (std::is_void_v<std::invoke_result_t<F, A...>>) {
+                    function(std::forward<A>(args)...);
+                    promise.Set();
+                }
+                else {
+                    promise.Set(function(std::forward<A>(args)...));
+                }
             };
         }
         // data
@@ -136,13 +162,16 @@ namespace tk
                 workers_.emplace_back(this);
             }
         }
-        void Run(Task task)
+        template<typename F, typename...A>
+        auto Run(F&& function, A&&...args)
         {
+            auto [task, future] = Task::Make(std::forward<F>(function), std::forward<A>(args)...);
             {
                 std::lock_guard lk{ taskQueueMtx_ };
                 tasks_.push_back(std::move(task));
             }
             taskQueueCv_.notify_one();
+            return future;
         }
         void WaitForAllDone()
         {
@@ -206,17 +235,17 @@ int main(int argc, char** argv)
 {
     using namespace std::chrono_literals;
 
-    //tk::ThreadPool pool{ 4 };
-    //const auto spitt = [] {
-    //    std::this_thread::sleep_for(100ms);
-    //    std::ostringstream ss;
-    //    ss << std::this_thread::get_id();
-    //    std::cout << std::format("<< {} >>\n", ss.str()) << std::flush;
-    //};
-    //for (int i = 0; i < 160; i++) {
-    //    pool.Run(spitt);
-    //}
-    //pool.WaitForAllDone();
+    tk::ThreadPool pool{ 4 };
+    const auto spitt = [] {
+        std::this_thread::sleep_for(100ms);
+        std::ostringstream ss;
+        ss << std::this_thread::get_id();
+        std::cout << std::format("<< {} >>\n", ss.str()) << std::flush;
+    };
+    for (int i = 0; i < 40; i++) {
+        pool.Run(spitt);
+    }
+    pool.WaitForAllDone();
 
     tk::Promise<int> prom;
     auto fut = prom.GetFuture();
