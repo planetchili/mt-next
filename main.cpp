@@ -9,6 +9,10 @@
 #include <optional>
 #include <semaphore>
 #include <cassert>
+#include <ranges>
+
+namespace rn = std::ranges;
+namespace vi = rn::views;
 
 namespace tk
 {
@@ -236,16 +240,18 @@ int main(int argc, char** argv)
     using namespace std::chrono_literals;
 
     tk::ThreadPool pool{ 4 };
-    const auto spitt = [] {
-        std::this_thread::sleep_for(100ms);
+    const auto spitt = [](int milliseconds) {
+        std::this_thread::sleep_for(1ms * milliseconds);
         std::ostringstream ss;
         ss << std::this_thread::get_id();
-        std::cout << std::format("<< {} >>\n", ss.str()) << std::flush;
+        return ss.str();
     };
-    for (int i = 0; i < 40; i++) {
-        pool.Run(spitt);
+    auto futures = vi::iota(0, 40) |
+        vi::transform([&](int i) { return pool.Run(spitt, i * 25); }) |
+        rn::to<std::vector>();
+    for (auto& f : futures) {
+        std::cout << "<<< " << f.Get() << " >>>" << std::endl;
     }
-    pool.WaitForAllDone();
 
     tk::Promise<int> prom;
     auto fut = prom.GetFuture();
