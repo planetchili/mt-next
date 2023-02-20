@@ -12,8 +12,6 @@
 
 namespace tk
 {
-    using Task = std::function<void()>;
-
     template<typename T>
     class SharedState
     {
@@ -78,6 +76,54 @@ namespace tk
     private:
         bool futureAvailable = true;
         std::shared_ptr<SharedState<T>> pState_;
+    };
+
+    class Task
+    {
+    public:
+        Task() = default;
+        Task(const Task&) = delete;
+        Task(Task&& donor) noexcept : executor_{ std::move(donor.executor_) } {}
+        Task& operator=(const Task&) = delete;
+        Task& operator=(Task&& rhs) noexcept
+        {
+            executor_ = std::move(rhs.executor_);
+            return *this;
+        }
+        void operator()()
+        {
+            executor_();
+        }
+        operator bool() const
+        {
+            return (bool)executor_;
+        }
+        template<typename F, typename...A>
+        static auto Make(F&& function, A&&...args)
+        {
+            Promise<std::invoke_result_t<F, A...>> promise;
+            auto future = promise.GetFuture();
+            return std::make_pair(
+                Task{ std::forward<F>(function), std::move(promise), std::forward<A>(args)... },
+                std::move(future)
+            );
+        }
+
+    private:
+        // functions
+        template<typename F, typename P, typename...A>
+        Task(F&& function, P&& promise, A&&...args)
+        {
+            executor_ = [
+                function = std::forward<F>(function),
+                promise = std::forward<P>(promise),
+                ...args = std::forward<A>(args)
+            ]() mutable {
+                promise.Set(function(std::forward<A>(args)...));
+            };
+        }
+        // data
+        std::function<void()> executor_;
     };
 
     class ThreadPool
@@ -174,13 +220,18 @@ int main(int argc, char** argv)
 
     tk::Promise<int> prom;
     auto fut = prom.GetFuture();
-
     std::thread{ [](tk::Promise<int> p) {
-        std::this_thread::sleep_for(2'500ms);
+        std::this_thread::sleep_for(1'500ms);
         p.Set(69);
     }, std::move(prom) }.detach();
-
     std::cout << fut.Get() << std::endl;
+
+    auto [task, future] = tk::Task::Make([](int x) {
+        std::this_thread::sleep_for(1'500ms);
+        return x + 42000;
+    }, 69);
+    std::thread{ std::move(task) }.detach();
+    std::cout << future.Get() << std::endl;
 
     return 0;
 }
