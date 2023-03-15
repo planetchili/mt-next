@@ -181,11 +181,11 @@ namespace tk
             ]() mutable {
                 try {
                     if constexpr (std::is_void_v<std::invoke_result_t<F, A...>>) {
-                        function(std::forward<A>(args)...);
+                        function(std::move(args)...);
                         promise.Set();
                     }
                     else {
-                        promise.Set(function(std::forward<A>(args)...));
+                        promise.Set(function(std::move(args)...));
                     }
                 }
                 catch (...) {
