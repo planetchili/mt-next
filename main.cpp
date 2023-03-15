@@ -37,6 +37,14 @@ namespace tk
             }
             return std::move(std::get<T>(result_));
         }
+        bool Ready()
+        {
+            if (readySignal_.try_acquire()) {
+                readySignal_.release();
+                return true;
+            }
+            return false;
+        }
     private:
         std::binary_semaphore readySignal_{ 0 };
         std::variant<std::monostate, T, std::exception_ptr> result_;
@@ -87,6 +95,10 @@ namespace tk
             assert(!resultAcquired);
             resultAcquired = true;
             return pState_->Get();
+        }
+        bool Ready()
+        {
+            return pState_->Ready();
         }
     private:
         // functions
@@ -261,41 +273,54 @@ int main(int argc, char** argv)
     using namespace std::chrono_literals;
 
     tk::ThreadPool pool{ 4 };
-    const auto spitt = [](int milliseconds) {
-        if (milliseconds && milliseconds % 100 == 0) {
-            throw std::runtime_error{ "wwee" };
-        }
-        std::this_thread::sleep_for(1ms * milliseconds);
-        std::ostringstream ss;
-        ss << std::this_thread::get_id();
-        return ss.str();
-    };
-    auto futures = vi::iota(0, 40) |
-        vi::transform([&](int i) { return pool.Run(spitt, i * 25); }) |
-        rn::to<std::vector>();
-    for (auto& f : futures) {
-        try {
-            std::cout << "<<< " << f.Get() << " >>>" << std::endl;
-        }
-        catch (...) {
-            std::cout << "yikes" << std::endl;
+    {
+        const auto spitt = [](int milliseconds) {
+            if (milliseconds && milliseconds % 100 == 0) {
+                throw std::runtime_error{ "wwee" };
+            }
+            std::this_thread::sleep_for(1ms * milliseconds);
+            std::ostringstream ss;
+            ss << std::this_thread::get_id();
+            return ss.str();
+        };
+        auto futures = vi::iota(0, 40) |
+            vi::transform([&](int i) { return pool.Run(spitt, i * 25); }) |
+            rn::to<std::vector>();
+        for (auto& f : futures) {
+            try {
+                std::cout << "<<< " << f.Get() << " >>>" << std::endl;
+            }
+            catch (...) {
+                std::cout << "yikes" << std::endl;
+            }
         }
     }
 
-    tk::Promise<int> prom;
-    auto fut = prom.GetFuture();
-    std::thread{ [](tk::Promise<int> p) {
-        std::this_thread::sleep_for(1'500ms);
-        p.Set(69);
-    }, std::move(prom) }.detach();
-    std::cout << fut.Get() << std::endl;
+    {
+        tk::Promise<int> prom;
+        auto fut = prom.GetFuture();
+        std::thread{ [](tk::Promise<int> p) {
+            std::this_thread::sleep_for(1'500ms);
+            p.Set(69);
+        }, std::move(prom) }.detach();
+        std::cout << fut.Get() << std::endl;
+    }
 
-    auto [task, future] = tk::Task::Make([](int x) {
-        std::this_thread::sleep_for(1'500ms);
-        return x + 42000;
-    }, 69);
-    std::thread{ std::move(task) }.detach();
-    std::cout << future.Get() << std::endl;
+    {
+        auto [task, future] = tk::Task::Make([](int x) {
+            std::this_thread::sleep_for(1'500ms);
+            return x + 42000;
+        }, 69);
+        std::thread{ std::move(task) }.detach();
+        std::cout << future.Get() << std::endl;
+    }
+
+    auto future = pool.Run([] { std::this_thread::sleep_for(2000ms); return 69; });
+    while (!future.Ready()) {
+        std::this_thread::sleep_for(250ms);
+        std::cout << "Waiting..." << std::endl;
+    }
+    std::cout << "Task ready! Value is: " << future.Get() << std::endl;
 
     return 0;
 }
