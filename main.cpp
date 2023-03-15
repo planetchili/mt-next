@@ -76,6 +76,14 @@ namespace tk
                 std::rethrow_exception(pException_);
             }
         }
+        bool Ready()
+        {
+            if (readySignal_.try_acquire()) {
+                readySignal_.release();
+                return true;
+            }
+            return false;
+        }
     private:
         std::binary_semaphore readySignal_{ 0 };
         bool complete_ = false;
