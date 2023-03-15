@@ -10,6 +10,7 @@
 #include <semaphore>
 #include <cassert>
 #include <ranges>
+#include <variant>
 
 namespace rn = std::ranges;
 namespace vi = rn::views;
@@ -23,7 +24,7 @@ namespace tk
         template<typename R>
         void Set(R&& result)
         {
-            if (!result_) {
+            if (std::holds_alternative<std::monostate>(result_)) {
                 result_ = std::forward<R>(result);
                 readySignal_.release();
             }
@@ -31,11 +32,14 @@ namespace tk
         T Get()
         {
             readySignal_.acquire();
-            return std::move(*result_);
+            if (auto ppException = std::get_if<std::exception_ptr>(&result_)) {
+                std::rethrow_exception(*ppException);
+            }
+            return std::move(std::get<T>(result_));
         }
     private:
         std::binary_semaphore readySignal_{ 0 };
-        std::optional<T> result_;
+        std::variant<std::monostate, T, std::exception_ptr> result_;
     };
 
     template<>
@@ -49,13 +53,25 @@ namespace tk
                 readySignal_.release();
             }
         }
+        void Set(std::exception_ptr pException)
+        {
+            if (!complete_) {
+                complete_ = true;
+                pException_ = pException;
+                readySignal_.release();
+            }
+        }
         void Get()
         {
             readySignal_.acquire();
+            if (pException_) {
+                std::rethrow_exception(pException_);
+            }
         }
     private:
         std::binary_semaphore readySignal_{ 0 };
         bool complete_ = false;
+        std::exception_ptr pException_ = nullptr;
     };
 
     template<typename T>
@@ -143,12 +159,17 @@ namespace tk
                 promise = std::forward<P>(promise),
                 ...args = std::forward<A>(args)
             ]() mutable {
-                if constexpr (std::is_void_v<std::invoke_result_t<F, A...>>) {
-                    function(std::forward<A>(args)...);
-                    promise.Set();
+                try {
+                    if constexpr (std::is_void_v<std::invoke_result_t<F, A...>>) {
+                        function(std::forward<A>(args)...);
+                        promise.Set();
+                    }
+                    else {
+                        promise.Set(function(std::forward<A>(args)...));
+                    }
                 }
-                else {
-                    promise.Set(function(std::forward<A>(args)...));
+                catch (...) {
+                    promise.Set(std::current_exception());
                 }
             };
         }
@@ -241,6 +262,9 @@ int main(int argc, char** argv)
 
     tk::ThreadPool pool{ 4 };
     const auto spitt = [](int milliseconds) {
+        if (milliseconds && milliseconds % 100 == 0) {
+            throw std::runtime_error{ "wwee" };
+        }
         std::this_thread::sleep_for(1ms * milliseconds);
         std::ostringstream ss;
         ss << std::this_thread::get_id();
@@ -250,7 +274,12 @@ int main(int argc, char** argv)
         vi::transform([&](int i) { return pool.Run(spitt, i * 25); }) |
         rn::to<std::vector>();
     for (auto& f : futures) {
-        std::cout << "<<< " << f.Get() << " >>>" << std::endl;
+        try {
+            std::cout << "<<< " << f.Get() << " >>>" << std::endl;
+        }
+        catch (...) {
+            std::cout << "yikes" << std::endl;
+        }
     }
 
     tk::Promise<int> prom;
