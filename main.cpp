@@ -99,13 +99,36 @@ namespace tk
     };
 }
 
+class Exec
+{
+public:
+    static void Init(size_t nAsync, size_t nCompute) { Get_(nAsync, nCompute); }
+    template<typename F, typename...A>
+    static auto Async(F&& function, A&&...args) {
+        return Get_(32, 4).asyncPool_.Run(std::forward<F>(function), std::forward<A>(args)...);
+    }
+    template<typename F, typename...A>
+    static auto Compute(F&& function, A&&...args) {
+        return Get_(32, 4).computePool_.Run(std::forward<F>(function), std::forward<A>(args)...);
+    }
+private:
+    static Exec& Get_(size_t nAsync, size_t nCompute)
+    {
+        static Exec exec{ nAsync, nCompute };
+        return exec;
+    }
+    Exec(size_t nAsync, size_t nCompute)
+        : asyncPool_{ nAsync }, computePool_{ nCompute } {}
+    tk::ThreadPool asyncPool_;
+    tk::ThreadPool computePool_;
+};
+
 int main(int argc, const char** argv)
 {
     using namespace std::chrono_literals;
 
     ParseCli(argc, argv);
-
-    tk::ThreadPool pool{ WorkerCount };
+    Exec::Init(AsyncCount, ComputeCount);
 
     ChiliTimer timer;
     auto tasks = GenerateDatasetRandom();
@@ -119,7 +142,10 @@ int main(int argc, const char** argv)
 
     timer.Mark();
     auto futures = tasks | vi::transform([&](const Task& workItem) {
-        return pool.Run(asyncTask);
+        return Exec::Async([&] {
+            asyncTask();
+            Exec::Compute(computeTask, workItem).get();
+        });
     }) | rn::to<std::vector>();
 
     for (auto& f : futures) {
