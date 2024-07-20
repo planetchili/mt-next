@@ -113,10 +113,13 @@ int main(int argc, const char** argv)
     const auto computeTask = [](const Task& t) {
         return t.Process();
     };
+    const auto asyncTask = [] {
+        std::this_thread::sleep_for(1ms * AsyncSleep);
+    };
 
     timer.Mark();
     auto futures = tasks | vi::transform([&](const Task& workItem) {
-        return pool.Run(computeTask, workItem);
+        return pool.Run(asyncTask);
     }) | rn::to<std::vector>();
 
     for (auto& f : futures) {

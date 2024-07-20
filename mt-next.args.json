@@ -4,11 +4,11 @@
   "Items": [
     {
       "Id": "c44a0073-3a39-41d0-8873-46bb3882af03",
-      "Command": "--dataset-size 120000"
+      "Command": "--dataset-size 1280"
     },
     {
       "Id": "592b130e-1cb9-483f-bf85-a7f8d90c4dc7",
-      "Command": "--worker-count 128"
+      "Command": "--worker-count 32"
     },
     {
       "Id": "db8c2846-c8a4-4c0d-aafc-471101a7e8c7",
@@ -21,6 +21,10 @@
     {
       "Id": "d3e4489e-7705-444d-ad19-8d0148542428",
       "Command": "--probability-heavy 0.15"
+    },
+    {
+      "Id": "9e146eff-2a08-4727-b29e-a6b57294a0e4",
+      "Command": "--async-sleep 100"
     }
   ]
 }
