@@ -1,14 +1,21 @@
 #pragma once
+#include "popl.h"
+#include <iostream>
 
-inline constexpr bool ChunkMeasurementEnabled = false;
-inline constexpr size_t WorkerCount = 4;
-inline constexpr size_t ChunkSize = 16'000;
-inline constexpr size_t ChunkCount = 1000;
-inline constexpr size_t LightIterations = 2;
-inline constexpr size_t HeavyIterations = 20;
-inline constexpr double ProbabilityHeavy = .15;
+inline size_t WorkerCount = 4;
+inline size_t DatasetSize = 2'000;
+inline size_t LightIterations = 1'000;
+inline size_t HeavyIterations = 10'000;
+inline double ProbabilityHeavy = .15;
 
-inline constexpr size_t SubsetSize = ChunkSize / WorkerCount;
-
-static_assert(ChunkSize >= WorkerCount);
-static_assert(ChunkSize% WorkerCount == 0);
+void ParseCli(int argc, const char** argv)
+{
+	using namespace popl;
+	OptionParser op;
+	op.add<Value<size_t>>("", "worker-count", "")->assign_to(&WorkerCount);
+	op.add<Value<size_t>>("", "dataset-size", "")->assign_to(&DatasetSize);
+	op.add<Value<size_t>>("", "light-iterations", "")->assign_to(&LightIterations);
+	op.add<Value<size_t>>("", "heavy-iterations", "")->assign_to(&HeavyIterations);
+	op.add<Value<double>>("", "probability-heavy", "")->assign_to(&ProbabilityHeavy);
+	op.parse(argc, argv);
+}

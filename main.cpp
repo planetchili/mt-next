@@ -1,7 +1,3 @@
-#include "popl.h"
-#include "Preassigned.h"
-#include "Queued.h"
-#include "AtomicQueued.h"
 #include "Task.h"
 #include <condition_variable>
 #include <functional>
@@ -103,11 +99,13 @@ namespace tk
     };
 }
 
-int main(int argc, char** argv)
+int main(int argc, const char** argv)
 {
     using namespace std::chrono_literals;
 
-    tk::ThreadPool pool{ 4 };
+    ParseCli(argc, argv);
+
+    tk::ThreadPool pool{ WorkerCount };
     {
         const auto spitt = [](int milliseconds) {
             if (milliseconds && milliseconds % 100 == 0) {

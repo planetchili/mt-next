@@ -6,7 +6,6 @@
 #include <numbers>
 #include "Constants.h"
 
-
 struct Task
 {
     double val;
@@ -24,7 +23,7 @@ struct Task
     }
 };
 
-using Dataset = std::vector<std::array<Task, ChunkSize>>;
+using Dataset = std::vector<Task>;
 
 Dataset GenerateDatasetRandom()
 {
@@ -32,14 +31,9 @@ Dataset GenerateDatasetRandom()
     std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
     std::bernoulli_distribution hDist{ ProbabilityHeavy };
 
-    Dataset chunks(ChunkCount);
-
-    for (auto& chunk : chunks)
-    {
-        std::ranges::generate(chunk, [&] { return Task{ .val = vDist(rne), .heavy = hDist(rne) }; });
-    }
-
-    return chunks;
+    Dataset data(DatasetSize);
+    std::ranges::generate(data, [&] { return Task{ .val = vDist(rne), .heavy = hDist(rne) }; });
+    return data;
 }
 
 Dataset GenerateDatasetEven()
@@ -47,32 +41,22 @@ Dataset GenerateDatasetEven()
     std::minstd_rand rne;
     std::uniform_real_distribution vDist{ 0., 2. * std::numbers::pi };
 
-    Dataset chunks(ChunkCount);
-
-    for (auto& chunk : chunks)
-    {
-        std::ranges::generate(chunk, [&, acc = 0.]() mutable {
-            bool heavy = false;
-            if ((acc += ProbabilityHeavy) >= 1.)
-            {
-                acc -= 1.;
-                heavy = true;
-            }
-            return Task{ .val = vDist(rne), .heavy = heavy };
-            });
-    }
-
-    return chunks;
+    Dataset data(DatasetSize);
+    std::ranges::generate(data, [&, acc = 0.]() mutable {
+        bool heavy = false;
+        if ((acc += ProbabilityHeavy) >= 1.)
+        {
+            acc -= 1.;
+            heavy = true;
+        }
+        return Task{ .val = vDist(rne), .heavy = heavy };
+    });
+    return data;
 }
 
 Dataset GenerateDatasetStacked()
 {
-    auto chunks = GenerateDatasetEven();
-
-    for (auto& chunk : chunks)
-    {
-        std::ranges::partition(chunk, std::identity{}, &Task::heavy);
-    }
-
-    return chunks;
+    auto data = GenerateDatasetEven();
+    std::ranges::partition(data, std::identity{}, &Task::heavy);
+    return data;
 }
