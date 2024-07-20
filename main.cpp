@@ -3,11 +3,11 @@
 #include <functional>
 #include <deque>
 #include <optional>
-#include <semaphore>
 #include <cassert>
 #include <ranges>
-#include <variant>
 #include <future>
+#include <vector>
+#include "ChiliTimer.h"
 
 namespace rn = std::ranges;
 namespace vi = rn::views;
@@ -106,36 +106,30 @@ int main(int argc, const char** argv)
     ParseCli(argc, argv);
 
     tk::ThreadPool pool{ WorkerCount };
-    {
-        const auto spitt = [](int milliseconds) {
-            if (milliseconds && milliseconds % 100 == 0) {
-                throw std::runtime_error{ "wwee" };
-            }
-            std::this_thread::sleep_for(1ms * milliseconds);
-            std::ostringstream ss;
-            ss << std::this_thread::get_id();
-            return ss.str();
-        };
-        auto futures = vi::iota(0, 40) |
-            vi::transform([&](int i) { return pool.Run(spitt, i * 25); }) |
-            rn::to<std::vector>();
-        for (auto& f : futures) {
-            try {
-                std::cout << "<<< " << f.get() << " >>>" << std::endl;
-            }
-            catch (...) {
-                std::cout << "yikes" << std::endl;
-            }
+
+    ChiliTimer timer;
+    auto tasks = GenerateDatasetRandom();
+    std::cout << "nTasks: " << tasks.size() << std::endl;
+    const auto computeTask = [](const Task& t) {
+        return t.Process();
+    };
+
+    timer.Mark();
+    auto futures = tasks | vi::transform([&](const Task& workItem) {
+        return pool.Run(computeTask, workItem);
+    }) | rn::to<std::vector>();
+
+    for (auto& f : futures) {
+        try {
+            f.get();
+        }
+        catch (...) {
+            std::cout << "yikes" << std::endl;
         }
     }
+    auto time = timer.Peek();
 
-
-    auto future = pool.Run([] { std::this_thread::sleep_for(2000ms); return 69; });
-    while (future.wait_for(0ms) != std::future_status::ready) {
-        std::this_thread::sleep_for(250ms);
-        std::cout << "Waiting..." << std::endl;
-    }
-    std::cout << "Task ready! Value is: " << future.get() << std::endl;
+    std::cout << "Time taken: " << time << std::endl;
 
     return 0;
 }
